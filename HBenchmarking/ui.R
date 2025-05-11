@@ -88,12 +88,13 @@ shinyUI(fluidPage(
                  
                  h5(strong("Cluster:")),
                  uiOutput("cluster_card"),  # Rendered from server
-                 
+                 br(),
                  
                  h5(strong("Confidence intervals")),
                  
                  checkboxInput("show_ci", "Show/ Hide Confidence Interval", value = TRUE),
                  helpText("This band shows a simple linear fit between the total revenue and the combined sum of selected expenses. This is not a multivariable regression line."),
+                 br(),
                  checkboxGroupInput("selected_betas", 
                                     "Select Expenses (Predictors) :",
                                     choices = c(
@@ -167,24 +168,50 @@ shinyUI(fluidPage(
              )
     ),
     
-    # THIRD TAB: Optimization
-    tabPanel("Benckmark",
+    # THIRD TAB: Benchmark (Stomatic Frontier Analysis)
+    tabPanel("Benchmark-SFA",
              sidebarLayout(
                sidebarPanel(
-                 # Later: select hospitals to compare
+                 
+                 #Cluster Card Tab 3
+                 h5(strong("Cluster:")),
+                 uiOutput("cluster_card_tab3"),
+                 
+                 #Select drop down
+                 
+                 br(),
+                 h5(strong("Compare Hospitals:")),
+                 br(),
+                 selectInput("hospital_1", "Select Hospital 1:", choices = NULL),
+                 selectInput("hospital_2", "Select Hospital 2:", choices = NULL)
+                 
+                 
                ),
                mainPanel(
-                 #not sure yet!
-                 h4("Selected Hospital Breakdown:"),
-                 tableOutput("selected_hospital_info")
+                 
+                 #Efficiency plot
+                 h4("Efficiency Plot: Actual vs Predicted Revenue"),
+                 plotlyOutput("efficiency_plot"),
+                 
+                 #TOP 10% Efficiency Table
+                 h4("Top 10% Efficient Hospitals"),
+                 tableOutput("top_efficiency_table"),
+                 br(),
+                 
+                 #RADAR PLOT
+                 br(),
+                 h4("Radar Plot: Hospital Comparison"),
+                 plotlyOutput("radar_plot")
+                 
+                 
                )
              )
     ),    
     
     
     
-    # FOURTH TAB: Optimization
-    tabPanel("Optimization",
+    # FOURTH TAB: Benchmark Data Envvelopment Analysis
+    tabPanel("Benchmark- DEA",
              sidebarLayout(
                sidebarPanel(
                  # Later: select hospitals to compare
@@ -195,16 +222,8 @@ shinyUI(fluidPage(
              )
     ),
     
-    # FIFTH TAB: Sensitivity Analysis
-    tabPanel("Sensitivity Analysis",
-             sidebarLayout(
-               sidebarPanel(
-                 # Later: slider input for % change
-               ),
-               mainPanel(
-                 # Later: sensitivity plot/table
-               )
-             )
-    )
+    
   )
 ))
+
+

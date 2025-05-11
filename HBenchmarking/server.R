@@ -6,6 +6,8 @@ library(readr)
 library(scales)
 library(ggplot2)
 library(plotly)
+library(tidyr) 
+library(stringr)
 
 # Load data once, globally
 df <- read_csv("Data/CostReport_2022_Final_Clustered_type.csv")
@@ -264,13 +266,13 @@ shinyServer(function(input, output, session) {
     predictors <- input$selected_betas
     req(predictors)
     
-    # ✅ Sum of expenses
+    # Sum of expenses
     data$sum_expenses <- rowSums(data[, predictors, drop = FALSE])
     
-    # ✅ Predicted revenue from the real model
+    # redicted revenue from the real model
     data$predicted_revenue <- predict(model, newdata = data)
     
-    # ✅ Build tooltip
+    # uild tooltip
     tooltip_vec <- sapply(1:nrow(data), function(i) {
       hospital <- data$`Hospital Name`[i]
       expense_breakdown <- paste(
@@ -536,9 +538,216 @@ shinyServer(function(input, output, session) {
         )
       )
   })
+  ##TAB 3
   
+  ###Stochastic Frontier Model using log-log regression
+  
+  
+  #Model with   NO STANDARIZATION
+  
+  no_standard_model <- reactive({
+    req(input$selected_cluster, input$selected_betas)
+    
+    data_cluster <- df %>% filter(cluster == input$selected_cluster)
+    predictors <- input$selected_betas
+    
+    formula_text <- paste("`Total Patient Revenue` ~", paste0("`", predictors, "`", collapse = " + "))
+    lm(as.formula(formula_text), data = data_cluster)
+  })
+  
+  
+  
+  #Plot
+  
+  
+  output$efficiency_plot <- renderPlotly({
+    # Model and filtered data
+    model <- no_standard_model()
+    data <- df %>% filter(cluster == input$selected_cluster)
+    
+    # Compute predicted and actual revenue
+    data$predicted <- predict(model, newdata = data)
+    data$actual <- data$`Total Patient Revenue`
+    
+    # Efficiency metrics
+    data$efficiency_score <- data$actual / data$predicted
+    data$rank <- rank(-data$efficiency_score, ties.method = "min")
+    
+    # Plot
+    p <- ggplot(data, aes(
+      x = predicted,
+      y = actual,
+      text = paste0(
+        "<b>Hospital:</b> ", `Hospital Name`, "<br>",
+        "<b>Actual:</b> $", scales::comma(actual, 1), "<br>",
+        "<b>Predicted:</b> $", scales::comma(predicted, 1), "<br>",
+        "<b>Efficiency Score:</b> ", round(efficiency_score, 3), "<br>",
+        "<b>Efficiency Rank:</b> ", rank
+      )
+    )) +
+      geom_point(color = "darkorange", alpha = 0.7) +
+      geom_abline(slope = 1, intercept = 0, color = "gray40", linetype = "dashed") +
+      labs(
+        title = "Actual vs Predicted Revenue",
+        x = "Predicted Revenue",
+        y = "Actual Revenue"
+      ) +
+      scale_x_continuous(labels = scales::label_dollar(scale = 1e-9, suffix = "B")) +
+      scale_y_continuous(labels = scales::label_dollar(scale = 1e-9, suffix = "B")) +
+      theme_minimal() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+      )
+    
+    ggplotly(p, tooltip = "text") %>%
+      layout(
+        hoverlabel = list(bgcolor = "gray", font = list(color = "white"))
+      )
+  })
+  
+  
+  output$cluster_card_tab3 <- renderUI({
+    req(input$selected_cluster)
+    div(
+      style = "padding: 10px; background-color: white; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; color: #333;",
+      input$selected_cluster
+    )
+  })
+  
+  #TOP 10% Efficciency Table
+  
+  output$efficiency_top10_table <- renderTable({
+    model <- no_standard_model()
+    data <- df %>% filter(cluster == input$selected_cluster)
+    
+    data$predicted <- predict(model, newdata = data)
+    data$actual <- data$`Total Patient Revenue`
+    data$efficiency_score <- data$actual / data$predicted
+    
+    # Rank and filter top 10%
+    data <- data %>%
+      mutate(rank = rank(-efficiency_score, ties.method = "min")) %>%
+      arrange(rank)
+    
+    top_n <- ceiling(0.10 * nrow(data))  # Top 10%
+    top_10 <- head(data, top_n)
+    
+    # Return only desired columns
+    top_10 %>%
+      select(`Hospital Name`, County, efficiency_score) %>%
+      mutate(efficiency_score = round(efficiency_score, 3))
+  })
+  
+  
+  
+  # Reactive: Table with Top 10% Efficient Hospitals
+  top_efficient_hospitals <- reactive({
+    model <- no_standard_model()
+    data <- df %>% filter(cluster == input$selected_cluster)
+    
+    data$predicted <- predict(model, newdata = data)
+    data$actual <- data$`Total Patient Revenue`
+    data$efficiency_score <- data$actual / data$predicted
+    
+    # Top 10% threshold
+    threshold <- quantile(data$efficiency_score, 0.9, na.rm = TRUE)
+    
+    data %>%
+      filter(efficiency_score >= threshold) %>%
+      arrange(desc(efficiency_score)) %>%
+      select(`Hospital Name`, County, `Efficiency Score` = efficiency_score)%>%
+      mutate(`Efficiency Score` = round(`Efficiency Score`, 2))
+  })
+  
+  output$top_efficiency_table <- renderTable({
+    top_efficient_hospitals()
+  }, striped = TRUE, bordered = TRUE, hover = TRUE)
+  
+  #COMPARISON BETWEEN 2 HOSPITALS
+  
+  # Update hospital dropdowns for comparison
+  observe({
+    req(filtered_data())
+    hospital_names <- filtered_data()$`Hospital Name`
+    
+    updateSelectInput(session, "hospital_1", choices = hospital_names)
+    updateSelectInput(session, "hospital_2", choices = hospital_names)
+  })
+  
+  #RADAR Plot
+  output$radar_plot <- renderPlotly({
+    req(input$hospital_1, input$hospital_2)
+    data <- filtered_data()
+    predictors <- input$selected_betas
+    req(predictors)
+    
+    # Subset the two hospitals
+    df_compare <- data %>%
+      filter(`Hospital Name` %in% c(input$hospital_1, input$hospital_2)) %>%
+      select(`Hospital Name`, all_of(predictors))
+    
+    # Normalize each predictor using range from full cluster data
+    df_scaled <- df_compare
+    for (col in predictors) {
+      col_range <- range(data[[col]], na.rm = TRUE)
+      df_scaled[[col]] <- (df_scaled[[col]] - col_range[1]) / (col_range[2] - col_range[1])
+    }
+    
+    # Combine scaled and raw data for tooltip
+    df_scaled$hospital <- df_scaled$`Hospital Name`
+    df_compare$hospital <- df_compare$`Hospital Name`
+    
+    df_long_scaled <- pivot_longer(df_scaled, cols = all_of(predictors), names_to = "Metric", values_to = "Scaled")
+    df_long_raw <- pivot_longer(df_compare, cols = all_of(predictors), names_to = "Metric", values_to = "Raw")
+    
+    df_final <- df_long_scaled %>%
+      left_join(df_long_raw, by = c("hospital", "Metric")) %>%
+      rename(`Hospital Name` = hospital)
+    
+    df_final$Metric <- gsub("Contract Labor: Direct Patient Care", "Contract Labor<br>Direct Patient Care", df_final$Metric)
+    df_final$Metric <- gsub("Total Salaries From Worksheet A", "Total Salaries<br>From Worksheet A", df_final$Metric)
+    
+    # Plot
+    plot_ly(type = 'scatterpolar', mode = 'lines+markers') %>%
+      add_trace(
+        r = df_final$Scaled[df_final$`Hospital Name` == input$hospital_1],
+        theta = df_final$Metric[df_final$`Hospital Name` == input$hospital_1],
+        name = input$hospital_1,
+        fill = 'toself',
+        opacity = 0.5,
+        text = paste0(
+          "<b>", df_final$Metric[df_final$`Hospital Name` == input$hospital_1], "</b><br>",
+          "Value: $", scales::comma(df_final$Raw[df_final$`Hospital Name` == input$hospital_1])
+        ),
+        hoverinfo = 'text'
+      ) %>%
+      add_trace(
+        r = df_final$Scaled[df_final$`Hospital Name` == input$hospital_2],
+        theta = df_final$Metric[df_final$`Hospital Name` == input$hospital_2],
+        name = input$hospital_2,
+        fill = 'toself',
+        opacity = 0.5,
+        text = paste0(
+          "<b>", df_final$Metric[df_final$`Hospital Name` == input$hospital_2], "</b><br>",
+          "Value: $", scales::comma(df_final$Raw[df_final$`Hospital Name` == input$hospital_2])
+        ),
+        hoverinfo = 'text'
+      ) %>%
+      layout(
+        polar = list(
+          radialaxis = list(visible = TRUE, range = c(0, 1))
+        ),
+        showlegend = TRUE
+      )
+  })
   
   
   
 })
+
+
+
+
+
 
