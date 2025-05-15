@@ -211,16 +211,37 @@ shinyUI(fluidPage(
     
     
     # FOURTH TAB: Benchmark Data Envvelopment Analysis
-    tabPanel("Benchmark- DEA",
+    # FOURTH TAB: Benchmark - DEA
+    tabPanel("Benchmark - DEA",
              sidebarLayout(
                sidebarPanel(
-                 # Later: select hospitals to compare
+                 # Cluster Selection
+                 h5(strong("Select Cluster:")),
+                 selectInput("dea_cluster", "Cluster:", choices = NULL),
+                 
+                 br(),
+                 # Download Button
+                 downloadButton("download_dea_data", "Download DEA Scores (.csv)")
                ),
                mainPanel(
-                 # Later: optimization plot + tables
+                 h4("DEA Input-Oriented Efficiency (Minimize expenses)"),
+                 plotlyOutput("dea_input_plot"),
+                 br(),
+                 
+                 # h4("DEA Input-Oriented Frontier Hospitals"),
+                 # tableOutput("dea_input_frontier_table"),
+                 # br(),
+                 
+                 h4("DEA Output-Oriented Efficiency (Maximize revenue)"),
+                 plotlyOutput("dea_output_plot"),
+                 br(),
+                 
+                 h4("DEA Frontier Hospitals"),
+                 tableOutput("dea_output_frontier_table")
                )
              )
-    ),
+    )
+    
     
     
   )

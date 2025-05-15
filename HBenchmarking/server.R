@@ -8,7 +8,7 @@ library(ggplot2)
 library(plotly)
 library(tidyr) 
 library(stringr)
-
+library(Benchmarking)
 # Load data once, globally
 df <- read_csv("Data/CostReport_2022_Final_Clustered_type.csv")
 
@@ -742,9 +742,305 @@ shinyServer(function(input, output, session) {
       )
   })
   
+  ##TAB 4 DEAA
+  
+  #Button 
+  observe({
+    clusters <- sort(unique(df$cluster))
+    updateSelectInput(session, "dea_cluster", choices = clusters)
+  })
+  
+  
+  # DEA reactive results
+  dea_results <- reactive({
+    req(input$selected_cluster_tab4)
+    
+    # Filter data by selected cluster
+    data_cluster <- df %>% filter(cluster == input$selected_cluster_tab4)
+    
+    # Define inputs and outputs
+    inputs <- data_cluster %>%
+      select(
+        `Total Salaries From Worksheet A`,
+        `Wage-Related Costs (Core)`,
+        `Contract Labor: Direct Patient Care`,
+        `Total Other Expenses`
+      ) %>%
+      as.matrix()
+    
+    outputs <- data_cluster %>%
+      select(`Total Patient Revenue`) %>%
+      as.matrix()
+    
+    # Compute DEA input-oriented efficiency
+    input_dea <- dea(X = inputs, Y = outputs, ORIENTATION = "in", RTS = "vrs")
+    output_dea <- dea(X = inputs, Y = outputs, ORIENTATION = "out", RTS = "vrs")
+    
+    # Add results to data
+    data_cluster$DEA_Input <- round(input_dea$eff, 3)
+    data_cluster$DEA_Output <- round(output_dea$eff, 3)
+    
+    data_cluster
+  })
+  
+  #DEA score computation 
+  # Reactive DEA dataset based on selected cluster
+  dea_data <- reactive({
+    req(input$dea_cluster)
+    
+    predictors <- c(
+      "Total Salaries From Worksheet A",
+      "Wage-Related Costs (Core)",
+      "Contract Labor: Direct Patient Care",
+      "Total Other Expenses"
+    )
+    
+    output_var <- "Total Patient Revenue"
+    
+    data_cluster <- df %>%
+      filter(cluster == input$dea_cluster) %>%
+      select(`Hospital Name`, County, all_of(predictors), all_of(output_var)) %>%
+      drop_na()
+    
+    # DEA Input-Oriented (minimize expenses)
+    dea_input <- dea(X = as.matrix(data_cluster[, predictors]),
+                     Y = as.matrix(data_cluster[, output_var]),
+                     ORIENTATION = "in")
+    
+    # DEA Output-Oriented (maximize revenue)
+    dea_output <- dea(X = as.matrix(data_cluster[, predictors]),
+                      Y = as.matrix(data_cluster[, output_var]),
+                      ORIENTATION = "out")
+    
+    # Add scores to dataset
+    data_cluster$DEA_Input <- round(dea_input$eff, 3)
+    data_cluster$DEA_Output <- round(dea_output$eff, 3)
+    
+    return(data_cluster)
+  })
+  
+  # Step B2: Reactive DEA Data
+  dea_data <- reactive({
+    req(input$dea_cluster)
+    
+    df %>%
+      filter(cluster == input$dea_cluster) %>%
+      select(`Hospital Name`, County,
+             `Total Salaries From Worksheet A`,
+             `Wage-Related Costs (Core)`,
+             `Contract Labor: Direct Patient Care`,
+             `Total Other Expenses`,
+             `Total Patient Revenue`)
+  })
+  
+  #DEA efficiency calculations
+  dea_scores <- reactive({
+    data <- dea_data()
+    
+    inputs <- as.matrix(data[, 3:6])
+    outputs <- as.matrix(data[, 7, drop = FALSE])
+    
+    # Input-oriented
+    dea_in <- dea(inputs, outputs, ORIENTATION = "in")
+    data$SFA_input <- round(dea_in$eff, 2)
+    
+    # Output-oriented
+    dea_out <- dea(inputs, outputs, ORIENTATION = "out")
+    data$SFA_output <- round(dea_out$eff, 2)
+    
+    data
+  })
+  #PLOT INPUT
+  
+  output$dea_input_plot <- renderPlotly({
+    data <- dea_scores()
+    inputs <- as.matrix(data[, 3:6])  # Expenses
+    outputs <- as.matrix(data[, 7, drop = FALSE])  # Revenue
+    
+    dea_in <- dea(inputs, outputs, ORIENTATION = "in")
+    is_efficient <- dea_in$eff == 1
+    
+    df_plot <- data.frame(
+      Input = rowSums(inputs),
+      Output = outputs[, 1],
+      Hospital = data$`Hospital Name`,
+      Efficient = is_efficient
+    )
+    
+    frontier <- df_plot %>%
+      filter(Efficient) %>%
+      arrange(Output)  # sort by x-axis
+    
+    p <- ggplot(df_plot, aes(x = Output, y = Input)) +
+      geom_point(aes(
+        color = Efficient,
+        text = paste0(
+          "<b>Hospital:</b> ", Hospital, "<br>",
+          "<b>Output (Revenue):</b> $", scales::comma(Output), "<br>",
+          "<b>Input (Expenses):</b> $", scales::comma(Input)
+        )
+      ), size = 3, alpha = 0.7) +
+      geom_line(data = frontier, aes(x = Output, y = Input), color = "black", linetype = "dashed") +
+      scale_color_manual(values = c("gray", "darkorange")) +
+      scale_x_continuous(labels = scales::label_dollar(scale = 1e-9, suffix = "B")) +
+      scale_y_continuous(labels = scales::label_dollar(scale = 1e-6, suffix = "M")) +
+      labs(
+        title = "DEA Input-Oriented Efficiency Frontier",
+        subtitle = "Orientation: Input — minimizing expenses",
+        x = "Total Output (Revenue)",
+        y = "Total Inputs (Expenses)"
+      ) +
+      theme_minimal() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "none"
+      )
+    
+    ggplotly(p, tooltip = "text") %>%
+      layout(hoverlabel = list(bgcolor = "gray", font = list(color = "white")))
+  })
+  
+  
+  #PLOP OUUTPUT
+  
+  output$dea_output_plot <- renderPlotly({
+    data <- dea_scores()
+    inputs <- as.matrix(data[, 3:6])  # Expenses
+    outputs <- as.matrix(data[, 7, drop = FALSE])  # Revenue
+    
+    dea_out <- dea(inputs, outputs, ORIENTATION = "out")
+    is_efficient <- dea_out$eff == 1
+    
+    df_plot <- data.frame(
+      Input = rowSums(inputs),
+      Output = outputs[, 1],
+      Hospital = data$`Hospital Name`,
+      Efficient = is_efficient
+    )
+    
+    frontier <- df_plot %>%
+      filter(Efficient) %>%
+      arrange(Input)  # sort by x-axis
+    
+    p <- ggplot(df_plot, aes(x = Input, y = Output)) +
+      geom_point(aes(
+        color = Efficient,
+        text = paste0(
+          "<b>Hospital:</b> ", Hospital, "<br>",
+          "<b>Input (Expenses):</b> $", scales::comma(Input), "<br>",
+          "<b>Output (Revenue):</b> $", scales::comma(Output)
+        )
+      ), size = 3, alpha = 0.7) +
+      geom_line(data = frontier, aes(x = Input, y = Output), color = "black", linetype = "dashed") +
+      scale_color_manual(values = c("gray", "darkorange")) +
+      scale_x_continuous(labels = scales::label_dollar(scale = 1e-6, suffix = "M")) +
+      scale_y_continuous(labels = scales::label_dollar(scale = 1e-9, suffix = "B")) +
+      labs(
+        title = "DEA Output-Oriented Efficiency Frontier",
+        subtitle = "Orientation: Output — maximizing revenue",
+        x = "Total Inputs (Expenses)",
+        y = "Total Output (Revenue)"
+      ) +
+      theme_minimal() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "none"
+      )
+    
+    ggplotly(p, tooltip = "text") %>%
+      layout(hoverlabel = list(bgcolor = "gray", font = list(color = "white")))
+  })
+  
+  #DEA Efficiency tables
+  # DEA Input-Oriented Frontier Table
+  output$dea_input_frontier_table <- renderTable({
+    data <- dea_scores()
+    inputs <- as.matrix(data[, 3:6])
+    outputs <- as.matrix(data[, 7, drop = FALSE])
+    
+    dea_in <- dea(inputs, outputs, ORIENTATION = "in")
+    
+    df <- data.frame(
+      Hospital = data$`Hospital Name`,
+      County = data$County,
+      DEA_Input_Efficiency = round(dea_in$eff, 3)
+    )
+    
+    df %>% filter(DEA_Input_Efficiency == 1)
+  })
+  
+  
+  # DEA Output-Oriented Frontier Table
+  output$dea_output_frontier_table <- renderTable({
+    data <- dea_scores()
+    inputs <- as.matrix(data[, 3:6])
+    outputs <- as.matrix(data[, 7, drop = FALSE])
+    
+    dea_out <- dea(inputs, outputs, ORIENTATION = "out")
+    
+    df <- data.frame(
+      Hospital = data$`Hospital Name`,
+      County = data$County,
+      DEA_Output_Efficiency = round(dea_out$eff, 3)
+    )
+    
+    df %>% filter(DEA_Output_Efficiency == 1)
+  })
+  
+  
+  #Download
+  output$download_dea_data <- downloadHandler(
+    filename = function() {
+      paste0("DEA_SFA_Scores_Cluster_", input$dea_cluster, ".csv")
+    },
+    content = function(file) {
+      # Filter cluster
+      data <- df %>% filter(cluster == input$dea_cluster)
+      
+      # DEA inputs and outputs
+      inputs <- as.matrix(data[, c(
+        "Total Salaries From Worksheet A",
+        "Wage-Related Costs (Core)",
+        "Contract Labor: Direct Patient Care",
+        "Total Other Expenses"
+      )])
+      
+      outputs <- as.matrix(data[, "Total Patient Revenue", drop = FALSE])
+      
+      # DEA models
+      dea_in <- dea(inputs, outputs, ORIENTATION = "in")
+      dea_out <- dea(inputs, outputs, ORIENTATION = "out")
+      
+      # SFA model using original scale
+      sfa_model <- lm(`Total Patient Revenue` ~
+                        `Total Salaries From Worksheet A` +
+                        `Wage-Related Costs (Core)` +
+                        `Contract Labor: Direct Patient Care` +
+                        `Total Other Expenses`, data = data)
+      
+      data$Predicted_Revenue <- predict(sfa_model, newdata = data)
+      data$SFA_Efficiency <- round(data$`Total Patient Revenue` / data$Predicted_Revenue, 3)
+      
+      # Add DEA scores
+      data$DEA_Input_Efficiency <- round(dea_in$eff, 3)
+      data$DEA_Output_Efficiency <- round(dea_out$eff, 3)
+      
+      # Drop predicted column (optional)
+      data <- data %>% select(-Predicted_Revenue)
+      
+      write.csv(data, file, row.names = FALSE)
+    }
+  )
+  
+  
   
   
 })
+
+
+
 
 
 
